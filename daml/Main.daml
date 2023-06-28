@@ -1,0 +1,170 @@
+module Main where
+
+-- import Daml.Script
+import DA.Text as Text
+-- import DA.Optional
+import DA.Date as Date
+-- import DA.Time as Time
+import DA.List as List
+
+type ArticleSubmissionId = ContractId ArticleSubmission
+type ApprovedArticleId = ContractId ApprovedArticle
+
+
+class TechDetailVerification i o where
+ getTechVerified : i -> o   
+
+instance TechDetailVerification ArticleInfo Bool where
+ getTechVerified articleInfoP = do
+  let 
+   wordCount = List.length (Text.words articleInfoP.content)
+   validCategories = List.length (filter (==articleInfoP.category) ["Sports", "Economics", "Politics", "Business", "Science","Climate"])
+        
+  ((wordCount > 0) && (validCategories > 0))
+
+template ArticleSubmission
+ with 
+  journalist: Party
+  editor: Party
+  publisher: Party
+  articleInfo: ArticleInfo 
+  articleReady: Bool
+  currentDate: Date  
+  feedback: Optional(Text)
+  preVerificationDone: Bool
+ where
+  signatory journalist
+  observer editor, publisher
+ 
+  key(journalist, articleInfo.topic, articleReady): (Party, Text, Bool)
+  maintainer key._1
+  
+  ensure ((subDate articleInfo.proposedPublishDate  currentDate) > 0) && (getTechVerified articleInfo)
+
+  nonconsuming choice Init: ArticleSubmissionId
+   controller journalist
+   do
+    return self
+  
+  --Add asserts articleInfo.topic != "" && articleInfo.content != ""
+  nonconsuming choice PrepRequestToPublish: ArticleSubmissionId
+   with
+    editingDate: Date
+    firstPageArticle: Optional (Bool)
+    proposedPublisher: Party
+    evidences: Either Text [Evidence]
+    verifiedFacts: Either Text [Fact]        
+    preVerificationDone: Bool
+    qualityOfWritingVerified: Bool
+    articleNowReady: Bool
+   controller journalist
+    do
+     if (evidencesValidated evidences && factsChecked verifiedFacts) then do      
+      preArticleApprovedP <- create this with 
+        articleInfo = this.articleInfo
+        editor        
+        publisher = proposedPublisher
+        preVerificationDone = True
+        articleReady = articleNowReady
+      return (preArticleApprovedP)     
+     else if (not (evidencesValidated evidences)) then do
+      archive  self
+      aS <- create this with
+       articleInfo
+       feedback = Some("Missing evidence supporting the article. Add more verified evidences") -- check for evidence missing
+       preVerificationDone = False
+      return (aS) 
+     else if (not (factsChecked verifiedFacts)) then do
+      archive  self
+      aS <- create this with
+       articleInfo
+       feedback = Some("Missing facts from the article. Add more facts") -- check for facts
+       preVerificationDone = False
+      return (aS)
+     else do
+      archive  self
+      aS <- create this with
+       articleInfo
+       feedback = Some("Revisit")
+       preVerificationDone = False
+      return (aS) 
+
+  nonconsuming choice Revisit: Optional (ArticleSubmissionId)
+   with 
+    journalist: Party
+    topic: Text
+    articleNowReady: Bool
+   controller journalist
+   do
+    lookupByKey @ArticleSubmission (journalist, topic, articleNowReady)
+   
+  choice VerifiedArticle: ApprovedArticleId
+   with 
+    finalApprovalDate: Date
+    finalPublisher: Party 
+    isfirstPageArticle: Bool
+   controller editor
+   do
+    approvedArticleP <- create ApprovedArticle with 
+     publisher = finalPublisher
+     approvalDate = finalApprovalDate
+     firstPageArticle =  isfirstPageArticle
+     ..
+    return(approvedArticleP) 
+         
+template ApprovedArticle
+ with
+  editor: Party
+  publisher: Party
+  firstPageArticle: Bool
+  articleInfo: ArticleInfo
+  approvalDate: Date  
+ where
+  signatory editor
+  observer articleInfo.journalist, publisher
+
+  key (editor, articleInfo.topic, approvalDate): (Party, Text, Date)
+  maintainer key._1
+ 
+  choice Publish: ApprovedArticleId
+   controller publisher
+   do 
+    return self
+
+  
+data ArticleInfo = ArticleInfo
+ with 
+  journalist: Party
+  topic: Text
+  content: Text
+  proposedPublishDate: Date
+  category: Text
+   deriving (Show, Eq, Ord)
+
+data Evidence = Evidence
+ with 
+  evidenceType: Text
+  evidenceDescription: Text
+   deriving (Show, Eq)
+
+data Fact = Fact
+ with 
+  factType: Text
+  factDetail: Text
+   deriving (Show, Eq)
+
+wordCheck: Text -> Text -> Int
+wordCheck word article = 
+  List.length (filter (== word) (Text.words article) )
+
+evidencesValidated: Either Text [Evidence] -> Bool
+evidencesValidated inputP = do 
+ case(inputP) of 
+  Right inputL -> (List.length inputL) > 0
+  Left text -> False
+
+factsChecked: Either Text [Fact] -> Bool
+factsChecked  inputP = do 
+ case(inputP) of 
+  Right inputL -> (List.length inputL) > 0
+  Left text -> False

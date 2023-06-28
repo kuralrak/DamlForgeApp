@@ -1,0 +1,120 @@
+module TestFile where
+
+import Main
+import Setup
+import DA.Date
+import Daml.Script
+
+{-
+    Min 1 Full Scenario & Min 3 Happy Paths
+       
+       -- + journalist creates the initial ArticleSubmission which can finally be approved by Editor and then published
+       -- + Pre Approve the article by providing initial information
+       -- + Revisit an ArticleSubmission
+       -- + Verify the article and publish the final article
+
+       Min 3 Unhappy Paths
+       --Article category is not one of standard categories
+       --Article content shall not be blank
+       --Publishing date shall not be in the past or less than current date passed
+-}  
+-- + journalist creates the initial ArticleSubmission which can finally be approved by Editor and then published
+testCreateArticleSubmission = script do
+ (testParties@TestParties{..}, testArticleInfos@TestArticleInfos{..}, preApprovedArticle1, preApprovedArticle2, approvedArticle1) <- setupArticleSubmissionsAndPublish
+ articleSubm3 <- submit journalist do
+  createCmd ArticleSubmission with
+      journalist
+      editor
+      articleInfo = articleInfo3
+      articleReady = False
+      feedback = None
+      currentDate = date 2023 Mar 11
+      publisher
+      preVerificationDone = False
+ return (testParties, testArticleInfos, preApprovedArticle1, preApprovedArticle2, approvedArticle1, articleSubm3)
+-- + Pre Approve the article by providing initial information
+testArticlePreSubmission = script do
+ (testParties@TestParties{..}, testArticleInfos@TestArticleInfos{..}, preApprovedArticle1, preApprovedArticle2, approvedArticle1, articleSubm3) <- testCreateArticleSubmission
+ preApprovedArticle3 <- submit journalist do
+   exerciseCmd articleSubm3 PrepRequestToPublish with
+    editingDate = date 2023 Mar 12
+    firstPageArticle = Some(True)
+    proposedPublisher = publisher
+    articleNowReady = True
+    evidences = Right [Evidence with
+     evidenceType = "Material"
+     evidenceDescription = "Material found through valid sources"]
+    verifiedFacts = Right [Fact with
+     factType = "Consensus2"
+     factDetail = "Consensus of relevant group2"]
+    qualityOfWritingVerified = True
+    preVerificationDone = False
+ return (testParties, testArticleInfos, preApprovedArticle1, preApprovedArticle2, approvedArticle1, articleSubm3, preApprovedArticle3)
+
+-- + Revisit an ArticleSubmission
+testArticleRevisit = script do
+ (testParties@TestParties{..}, testArticleInfos@TestArticleInfos{..}, preApprovedArticle1, preApprovedArticle2, approvedArticle1, articleSubm3, preApprovedArticle3) <- testArticlePreSubmission
+ revisitArticleSubmission <- submit journalist do 
+  exerciseCmd articleSubm3 Revisit with
+   journalist
+   topic = "World temperatures 1 degree"
+   articleNowReady = True
+ return (testParties, testArticleInfos, preApprovedArticle1, preApprovedArticle2, approvedArticle1, articleSubm3, preApprovedArticle3, revisitArticleSubmission)
+  
+-- + Verify the article and publish the final article
+testArticleVerificationAndPublish = script do 
+  (testParties@TestParties{..}, testArticleInfos@TestArticleInfos{..}, preApprovedArticle1, preApprovedArticle2, approvedArticle1, articleSubm3, preApprovedArticle3) <- testArticlePreSubmission
+  fullyApprovedArticle1 <- submit editor do
+    exerciseCmd preApprovedArticle3 VerifiedArticle with
+     finalApprovalDate = date 2023 Mar 14
+     finalPublisher = publisher
+     isfirstPageArticle = True
+  -- + publish the final article   
+  publishedArticle1 <- submit publisher do 
+   exerciseCmd fullyApprovedArticle1 Publish 
+  return (testParties, testArticleInfos, preApprovedArticle1, preApprovedArticle2, approvedArticle1, articleSubm3, preApprovedArticle3, approvedArticle1, fullyApprovedArticle1)
+
+--Article category is not one of standard categories
+publishCategoryNotListed = script do 
+ (testParties@TestParties{..}, testArticleInfos@TestArticleInfos{..}, preApprovedArticle1, preApprovedArticle2, approvedArticle1) <- setupArticleSubmissionsAndPublish
+ articleSubm4 <- submitMustFail journalist do
+  createCmd ArticleSubmission with
+      journalist
+      editor
+      articleInfo = articleInfo4 -- ArticleInfo has a non standard category "Notlisted" 
+      articleReady = False
+      feedback = None
+      currentDate = date 2023 Mar 11
+      publisher
+      preVerificationDone = False
+ return (testParties, testArticleInfos, preApprovedArticle1, preApprovedArticle2, approvedArticle1, articleSubm4)
+
+ --Article content shall not be blank
+publishedContentMissing = script do 
+ (testParties@TestParties{..}, testArticleInfos@TestArticleInfos{..}, preApprovedArticle1, preApprovedArticle2, approvedArticle1) <- setupArticleSubmissionsAndPublish
+ articleSubm4 <- submitMustFail journalist do
+  createCmd ArticleSubmission with
+      journalist
+      editor
+      articleInfo = articleInfo5 -- ArticleInfo has blank content ""
+      articleReady = False
+      feedback = None
+      currentDate = date 2023 Mar 11
+      publisher
+      preVerificationDone = False
+ return (testParties, testArticleInfos, preApprovedArticle1, preApprovedArticle2, approvedArticle1, articleSubm4)
+
+--Publishing date shall not be in the past or less than current date passed
+publishedDateIsInThePast = script do 
+ (testParties@TestParties{..}, testArticleInfos@TestArticleInfos{..}, preApprovedArticle1, preApprovedArticle2, approvedArticle1) <- setupArticleSubmissionsAndPublish
+ articleSubm4 <- submitMustFail journalist do
+  createCmd ArticleSubmission with
+      journalist
+      editor
+      articleInfo = articleInfo3 
+      articleReady = False
+      feedback = None
+      currentDate = date 2023 Mar 30 -- publish date as per articleInfo is in past : proposedPublishDate = date 2023 Mar 15
+      publisher
+      preVerificationDone = False
+ return (testParties, testArticleInfos, preApprovedArticle1, preApprovedArticle2, approvedArticle1, articleSubm4)

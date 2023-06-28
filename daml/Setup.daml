@@ -1,0 +1,166 @@
+module Setup where
+
+import Main
+import DA.Date
+import Daml.Script
+
+data TestParties = TestParties with
+    editor: Party
+    journalist: Party
+    publisher: Party
+    
+
+setupTestParties = script do
+    -- 1. Allocate parties with the given display name
+    editor <- allocatePartyWithHint "Editor" (PartyIdHint "EDT")
+    journalist <- allocatePartyWithHint "Journalist" (PartyIdHint "JOURN")
+    publisher <- allocatePartyWithHint "Publisher" (PartyIdHint "PUBL")
+
+    return TestParties with
+        editor
+        journalist
+        publisher
+
+setupUsers = script do
+    (testParties@TestParties{..}, testProjectInfos@TestArticleInfos{..}, TestEvidenceAndFacts with {evidences1, evidences2, facts1}) <- setupArticleInfos
+
+    -- 2. Construct user-ids from text
+    balaId <- validateUserId "BalaEditor"   
+    gregId <- validateUserId "GregJournalist"
+    nooiId <- validateUserId "NooiJournalist"
+    sundarId <- validateUserId "SundarPublisher"
+
+    -- 3. Create users with the given rights 
+    createUser (User balaId (Some editor)) [CanActAs editor]  
+    createUser (User gregId (Some journalist)) [CanActAs journalist]
+    createUser (User nooiId (Some journalist)) [CanActAs journalist]
+    createUser (User sundarId (Some publisher)) [CanActAs publisher]
+
+    submit journalist do
+     createCmd ArticleSubmission with
+      journalist
+      editor
+      articleInfo = articleInfo1
+      articleReady = False
+      feedback = None
+      currentDate = date 2023 Mar 10
+      publisher
+      preVerificationDone = False
+
+data TestArticleInfos = TestArticleInfos with
+    articleInfo1: ArticleInfo
+    articleInfo2: ArticleInfo
+    articleInfo3: ArticleInfo
+    articleInfo4: ArticleInfo
+    articleInfo5: ArticleInfo
+
+data TestEvidenceAndFacts = TestEvidenceAndFacts with
+    evidences1: [Evidence]
+    evidences2: [Evidence]
+    facts1: [Fact]
+    facts2: [Fact]
+
+
+setupArticleInfos = script do
+ testParties@TestParties{..} <- setupTestParties
+ let
+  articleInfo1 = ArticleInfo with
+   journalist = journalist
+   topic = "World temperatures 1 degree"
+   content= "Since last 5 years the world has heated 1 more degree..."
+   proposedPublishDate = date 2023 Mar 15
+   category = "Climate"
+  articleInfo2 = ArticleInfo with
+   journalist = journalist
+   topic = "Elections coming in USA"
+   content= "There is a heated political race for the president this year..."
+   proposedPublishDate = date 2023 Mar 20
+   category = "Politics"
+  articleInfo3 = ArticleInfo with
+   journalist = journalist
+   topic = "Tech stocks have been rallying recently"
+   content= "The stocks rally has been continuing lead by Tech stocks..."
+   proposedPublishDate = date 2023 Mar 15
+   category = "Economics" 
+  articleInfo4 = ArticleInfo with
+   journalist = journalist
+   topic = "Tech stocks update"
+   content= "Something"
+   proposedPublishDate = date 2023 Mar 15
+   category = "Notlisted" 
+  articleInfo5 = ArticleInfo with
+   journalist = journalist
+   topic = "Tech stocks update"
+   content= ""
+   proposedPublishDate = date 2023 Mar 15
+   category = "Economics"  
+  evidences1 = [Evidence with
+   evidenceType = "Material"
+   evidenceDescription = "Material found through valid sources"]
+  evidences2 = [Evidence with
+   evidenceType = "Statistics"
+   evidenceDescription = "Statistics and data details"]
+  facts1 = [Fact with
+   factType = "Consensus"
+   factDetail = "Consensus of relevant group"]
+  facts2 = [Fact with
+   factType = "Consensus2"
+   factDetail = "Consensus of relevant group2"] 
+
+ return (testParties, TestArticleInfos with {articleInfo1, articleInfo2, articleInfo3, articleInfo4, articleInfo5}, TestEvidenceAndFacts with {evidences1, evidences2, facts1, facts2})
+
+setupArticleSubmissionsAndPublish = script do
+ (testParties@TestParties{..}, testArticleInfos@TestArticleInfos{..}, testEvidenceAndFacts@TestEvidenceAndFacts{..}) <- setupArticleInfos
+ articleSubm1 <- submit journalist do
+  createCmd ArticleSubmission with
+    journalist
+    editor
+    articleInfo = articleInfo1
+    articleReady = False
+    feedback = None
+    currentDate = date 2023 Mar 10
+    publisher
+    preVerificationDone = False
+
+    
+
+ articleSubm2 <- submit journalist do
+  createCmd ArticleSubmission with
+    journalist
+    editor
+    articleInfo = articleInfo2
+    articleReady = False
+    feedback = None
+    currentDate = date 2023 Mar 10
+    publisher
+    preVerificationDone = False
+    
+ preApprovedArticle1 <- submit journalist do
+   exerciseCmd articleSubm1 PrepRequestToPublish with
+    editingDate = date 2023 Mar 10
+    firstPageArticle = Some(True)
+    proposedPublisher = publisher
+    articleNowReady = True
+    evidences = Right evidences1
+    verifiedFacts = Right facts1
+    qualityOfWritingVerified = True
+    preVerificationDone = False
+    
+ preApprovedArticle2 <- submit journalist do
+   exerciseCmd articleSubm2 PrepRequestToPublish with
+    editingDate = date 2023 Mar 10
+    firstPageArticle = Some(True)
+    proposedPublisher = publisher
+    articleNowReady = True
+    evidences = Right evidences2
+    verifiedFacts = Right facts1
+    qualityOfWritingVerified = True
+    preVerificationDone = False
+
+ approvedArticle1 <- submit editor do
+   exerciseCmd preApprovedArticle1 VerifiedArticle with
+    finalApprovalDate = date 2023 Mar 14
+    finalPublisher = publisher
+    isfirstPageArticle = True
+ 
+ return (testParties, testArticleInfos, preApprovedArticle1, preApprovedArticle2, approvedArticle1)
